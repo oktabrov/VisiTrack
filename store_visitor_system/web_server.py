@@ -144,49 +144,119 @@ async def dashboard():
             100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
         }
 
-        /* Stat Cards Grid */
-        .stats-grid {
+        /* Primary/Today's Stats Section */
+        .primary-stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
             gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .primary-card {
+            background: rgba(22, 27, 34, 0.85);
+            backdrop-filter: blur(16px);
+            border-radius: 20px;
+            padding: 2rem;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .primary-card:hover {
+            transform: translateY(-3px);
+        }
+
+        .primary-card-unique {
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            box-shadow: 0 10px 40px rgba(16, 185, 129, 0.08), 0 0 1px 1px rgba(16, 185, 129, 0.2);
+        }
+        .primary-card-unique:hover {
+            box-shadow: 0 12px 48px rgba(16, 185, 129, 0.15), 0 0 2px 2px rgba(16, 185, 129, 0.4);
+        }
+
+        .primary-card-visits {
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            box-shadow: 0 10px 40px rgba(59, 130, 246, 0.08), 0 0 1px 1px rgba(59, 130, 246, 0.2);
+        }
+        .primary-card-visits:hover {
+            box-shadow: 0 12px 48px rgba(59, 130, 246, 0.15), 0 0 2px 2px rgba(59, 130, 246, 0.4);
+        }
+
+        .primary-title {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 0.75rem;
+        }
+
+        .primary-value {
+            font-size: 3.5rem;
+            font-weight: 800;
+            line-height: 1;
+            margin-bottom: 0.75rem;
+        }
+        
+        .primary-card-unique .primary-value {
+            background: linear-gradient(135deg, #10b981, #34d399);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .primary-card-visits .primary-value {
+            background: linear-gradient(135deg, #3b82f6, #60a5fa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .primary-sub {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+        }
+
+        /* Secondary Stats Grid */
+        .secondary-stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.25rem;
             margin-bottom: 2.5rem;
         }
 
-        .stat-card {
-            background: var(--bg-card);
-            backdrop-filter: blur(12px);
-            border: 1px solid var(--border-color);
-            border-radius: 16px;
-            padding: 1.5rem;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        .secondary-card {
+            background: rgba(22, 27, 34, 0.45);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 14px;
+            padding: 1.25rem;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
             transition: transform 0.2s ease, border-color 0.2s ease;
         }
 
-        .stat-card:hover {
+        .secondary-card:hover {
             transform: translateY(-2px);
-            border-color: rgba(255, 255, 255, 0.2);
+            border-color: rgba(255, 255, 255, 0.15);
+            background: rgba(22, 27, 34, 0.6);
         }
 
-        .stat-title {
+        .secondary-title {
             color: var(--text-muted);
-            font-size: 0.9rem;
+            font-size: 0.8rem;
             font-weight: 500;
             text-transform: uppercase;
             letter-spacing: 0.05em;
             margin-bottom: 0.5rem;
         }
 
-        .stat-value {
-            font-size: 2.5rem;
+        .secondary-value {
+            font-size: 1.85rem;
             font-weight: 700;
-            color: var(--text-main);
+            color: #d1d5db;
             line-height: 1;
+            margin-bottom: 0.4rem;
         }
 
-        .stat-sub {
-            margin-top: 0.75rem;
-            font-size: 0.85rem;
-            color: var(--text-muted);
+        .secondary-sub {
+            font-size: 0.8rem;
+            color: rgba(156, 163, 175, 0.7);
         }
 
         /* Data Section */
@@ -284,37 +354,47 @@ async def dashboard():
             <div>⚙️ Decoder Backend: <span id="info-backend" style="color: var(--text-main); font-weight: 500;">N/A</span></div>
         </div>
 
-        <!-- Stat Cards -->
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-title">Unique Visitors Today</div>
-                <div class="stat-value" id="stat-unique-today">0</div>
-                <div class="stat-sub">Distinct people seen today</div>
+        <!-- Primary/Today's Stats (Main Indicators) -->
+        <div class="section-title" style="margin-top: 1rem;">
+            📊 Today's Metrics (Real-Time)
+        </div>
+        <div class="primary-stats-grid">
+            <div class="primary-card primary-card-unique">
+                <div class="primary-title">Unique Visitors Today</div>
+                <div class="primary-value" id="stat-unique-today">0</div>
+                <div class="primary-sub">Distinct people identified in the store today</div>
             </div>
-            <div class="stat-card">
-                <div class="stat-title">This Week</div>
-                <div class="stat-value" id="stat-unique-week">0</div>
-                <div class="stat-sub">Distinct people seen this week</div>
+            <div class="primary-card primary-card-visits">
+                <div class="primary-title">Total Visit Events Today</div>
+                <div class="primary-value" id="stat-visits-today">0</div>
+                <div class="primary-sub">Includes repeat customers entering after 10m cooldown</div>
             </div>
-            <div class="stat-card">
-                <div class="stat-title">This Month</div>
-                <div class="stat-value" id="stat-unique-month">0</div>
-                <div class="stat-sub">Distinct people seen this month</div>
+        </div>
+
+        <!-- Secondary Periodical Stats -->
+        <div class="section-title">
+            📈 Historical Analytics
+        </div>
+        <div class="secondary-stats-grid">
+            <div class="secondary-card">
+                <div class="secondary-title">This Week</div>
+                <div class="secondary-value" id="stat-unique-week">0</div>
+                <div class="secondary-sub">Distinct visitors this week</div>
             </div>
-            <div class="stat-card">
-                <div class="stat-title">This Year</div>
-                <div class="stat-value" id="stat-unique-year">0</div>
-                <div class="stat-sub">Distinct people seen this year</div>
+            <div class="secondary-card">
+                <div class="secondary-title">This Month</div>
+                <div class="secondary-value" id="stat-unique-month">0</div>
+                <div class="secondary-sub">Distinct visitors this month</div>
             </div>
-            <div class="stat-card">
-                <div class="stat-title">Total Visit Events Today</div>
-                <div class="stat-value" id="stat-visits-today">0</div>
-                <div class="stat-sub">Includes repeat visits after cooldown</div>
+            <div class="secondary-card">
+                <div class="secondary-title">This Year</div>
+                <div class="secondary-value" id="stat-unique-year">0</div>
+                <div class="secondary-sub">Distinct visitors this year</div>
             </div>
-            <div class="stat-card">
-                <div class="stat-title">Total Registered Visitors</div>
-                <div class="stat-value" id="stat-total-reg">0</div>
-                <div class="stat-sub">All-time unique customer database</div>
+            <div class="secondary-card">
+                <div class="secondary-title">All-Time Database</div>
+                <div class="secondary-value" id="stat-total-reg">0</div>
+                <div class="secondary-sub">Total registered visitor IDs</div>
             </div>
         </div>
 
