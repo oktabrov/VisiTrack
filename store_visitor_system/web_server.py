@@ -452,11 +452,6 @@ async def dashboard():
                 document.getElementById('stat-visits-today').innerText = stats.total_visits_today;
                 document.getElementById('stat-total-reg').innerText = stats.total_registered_visitors;
 
-                // Fetch visitors list
-                const visitorsRes = await fetch('/api/visitors');
-                const visitors = await visitorsRes.json();
-                const vBody = document.getElementById('visitors-table-body');
-                if (visitors.length === 0) {
                 // Update camera status details
                 updateStatusUI(
                     stats.pipeline_status,
