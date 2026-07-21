@@ -1,0 +1,45 @@
+# ============================================================
+# VisiTrack — Python Dependencies
+# ============================================================
+#
+# IMPORTANT: Install PyTorch with CUDA FIRST (before pip install -r):
+#
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+#
+# Verify GPU access:
+#   python -c "import torch; print(torch.cuda.is_available())"
+#   python -c "import torch; print(torch.cuda.get_device_name(0))"
+#
+# Then install the remaining dependencies:
+#   pip install -r requirements.txt
+# ============================================================
+
+# ── Object Detection ────────────────────────────────────────
+rfdetr
+supervision
+
+# ── Face Detection & Recognition ────────────────────────────
+insightface
+# IMPORTANT: Install ONLY onnxruntime-gpu, NOT onnxruntime.
+# If both are installed, CUDA provider won't register.
+# v1.20.2 works with CUDA 12.1 + numpy 2.x
+# v1.27+ needs CUDA 12.8+, v1.18.x needs numpy<2.0
+onnxruntime-gpu==1.20.2
+
+# ── Person Re-Identification ────────────────────────────────
+torchreid
+
+# ── Computer Vision ─────────────────────────────────────────
+opencv-python-headless
+numpy
+Pillow
+
+# ── Scientific / Math ───────────────────────────────────────
+scipy
+
+# ── Configuration ───────────────────────────────────────────
+python-dotenv
+
+# ── Optional: TensorRT / ONNX Optimization ──────────────────
+# tensorrt               # Uncomment if using ENABLE_TENSORRT=true
+# onnx                   # Uncomment for model export
