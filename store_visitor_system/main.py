@@ -105,22 +105,38 @@ def main() -> None:
         )
         sys.exit(1)
 
-    # ── Step 4: Load models & start pipeline ─────────────────────────
+    # ── Step 4: Database & Web Dashboard ─────────────────────────────
+    from .database import DatabaseManager
+    from .web_server import WebServerThread
+
+    db = DatabaseManager(config)
+
+    web_thread: Optional[WebServerThread] = None
+    if config.enable_web_server:
+        web_thread = WebServerThread(db, port=config.web_server_port)
+        web_thread.start()
+        logger.info("🌐 Web Dashboard live at: http://localhost:%d", config.web_server_port)
+
+    # ── Step 5: Load models & start pipeline ─────────────────────────
     # Models are loaded inside InferencePipeline.__init__
     # (detector, face_processor, reid — all on CUDA with warm-up)
     try:
-        pipeline = InferencePipeline(gpu, config)
+        pipeline = InferencePipeline(gpu, config, db_manager=db)
     except Exception as exc:
         logger.error("Failed to initialize pipeline: %s", exc, exc_info=True)
         sys.exit(1)
 
-    # ── Step 5: Device summary ───────────────────────────────────────
+    # ── Step 6: Device summary ───────────────────────────────────────
     _log_device_summary(gpu, config)
     gpu.log_memory()
 
-    # ── Step 6: Run ──────────────────────────────────────────────────
+    # ── Step 7: Run ──────────────────────────────────────────────────
     logger.info("All systems ready. Starting real-time inference …")
-    pipeline.run()
+    try:
+        pipeline.run()
+    finally:
+        if web_thread:
+            web_thread.stop()
 
     logger.info("VisiTrack terminated.")
 

@@ -31,10 +31,16 @@ torchreid
 
 # ── Computer Vision ─────────────────────────────────────────
 opencv-python-headless
-numpy
-Pillow
+scikit-image
+pillow
 
-# ── Scientific / Math ───────────────────────────────────────
+# ── Database & Web Dashboard ────────────────────────────────
+psycopg2-binary
+fastapi
+uvicorn
+jinja2
+
+# ── Performance & Utilities ───────────────────────────────────────
 scipy
 
 # ── Configuration ───────────────────────────────────────────

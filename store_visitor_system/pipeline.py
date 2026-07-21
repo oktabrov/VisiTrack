@@ -57,9 +57,11 @@ class InferencePipeline:
         self,
         gpu_manager: "GPUManager",
         config: "Config",
+        db_manager: Optional["DatabaseManager"] = None,
     ) -> None:
         self._gpu = gpu_manager
         self._config = config
+        self._db = db_manager
 
         # Performance monitor
         self._perf = PerformanceMonitor(
@@ -225,20 +227,30 @@ class InferencePipeline:
         tracks: list,
         detections: List["Detection"],
     ) -> None:
-        """Log notable tracking events."""
+        """Log notable tracking events and record visits in database."""
         for track in tracks:
+            visitor_id = f"VISITOR-{track.track_id:03d}"
+
             if track.hits == 1:
                 logger.info(
-                    "🟢 New person detected — Track #%d (conf=%.2f)",
+                    "🟢 New person detected — Track #%d (%s, conf=%.2f)",
                     track.track_id,
+                    visitor_id,
                     track.confidence,
                 )
+                if self._db is not None:
+                    self._db.record_visit(
+                        visitor_id=visitor_id,
+                        confidence=track.confidence,
+                    )
+
             if track.is_confirmed and track.hits == track.age:
                 # Just confirmed
                 if track.face_embedding is not None:
                     logger.info(
-                        "👤 Track #%d confirmed with face embedding.",
+                        "👤 Track #%d (%s) confirmed with face embedding.",
                         track.track_id,
+                        visitor_id,
                     )
 
     # ── Signal handling ──────────────────────────────────────────────

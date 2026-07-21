@@ -147,6 +147,37 @@ class Config:
         default_factory=lambda: _env_float("TRACK_IOU_THRESHOLD", 0.3)
     )
 
+    # Database Settings
+    use_postgres: bool = field(
+        default_factory=lambda: _env_bool("USE_POSTGRES", True)
+    )
+    postgres_host: str = field(
+        default_factory=lambda: _env_str("POSTGRES_HOST", "localhost")
+    )
+    postgres_port: int = field(
+        default_factory=lambda: _env_int("POSTGRES_PORT", 5432)
+    )
+    postgres_db: str = field(
+        default_factory=lambda: _env_str("POSTGRES_DB", "visitrack")
+    )
+    postgres_user: str = field(
+        default_factory=lambda: _env_str("POSTGRES_USER", "postgres")
+    )
+    postgres_password: str = field(
+        default_factory=lambda: _env_str("POSTGRES_PASSWORD", "postgres")
+    )
+    visit_cooldown_minutes: int = field(
+        default_factory=lambda: _env_int("VISIT_COOLDOWN_MINUTES", 10)
+    )
+
+    # Web Dashboard Settings
+    enable_web_server: bool = field(
+        default_factory=lambda: _env_bool("ENABLE_WEB_SERVER", True)
+    )
+    web_server_port: int = field(
+        default_factory=lambda: _env_int("WEB_SERVER_PORT", 8000)
+    )
+
     def __post_init__(self) -> None:
         """Validate configuration values after initialization."""
         if self.device not in ("cuda", "cpu"):
