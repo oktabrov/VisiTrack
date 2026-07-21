@@ -99,8 +99,26 @@ class InferencePipeline:
         signal.signal(signal.SIGTERM, self._signal_handler)
 
         try:
+            # Set status to CONNECTING
+            try:
+                from .web_server import update_pipeline_status
+                update_pipeline_status("CONNECTING", camera=self._config.rtsp_url)
+            except Exception:
+                pass
+
             self._video.start()
             self._perf.start()
+
+            # Set status to STREAMING and push camera resolution/backend details
+            try:
+                w, h = self._video.resolution
+                update_pipeline_status(
+                    "STREAMING",
+                    resolution=f"{w}x{h}",
+                    backend=self._video.backend_name,
+                )
+            except Exception:
+                pass
 
             logger.info(
                 "Pipeline started — processing RTSP stream: %s",
@@ -119,6 +137,11 @@ class InferencePipeline:
             logger.info("Interrupted by user.")
         except Exception as exc:
             logger.error("Pipeline fatal error: %s", exc, exc_info=True)
+            try:
+                from .web_server import update_pipeline_status
+                update_pipeline_status("ERROR")
+            except Exception:
+                pass
         finally:
             self.shutdown()
 
@@ -128,6 +151,13 @@ class InferencePipeline:
         self._stop_event.set()
         self._perf.stop()
         self._video.stop()
+        
+        try:
+            from .web_server import update_pipeline_status
+            update_pipeline_status("OFFLINE")
+        except Exception:
+            pass
+            
         logger.info("Pipeline shutdown complete.")
 
     # ── Inference loop ───────────────────────────────────────────────

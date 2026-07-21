@@ -504,6 +504,13 @@ class VideoCapture:
     def _reconnect(self, delay: float) -> None:
         """Try to reconnect after a stream failure."""
         logger.info("Reconnecting in %.1f s …", delay)
+
+        try:
+            from .web_server import update_pipeline_status
+            update_pipeline_status("CONNECTING")
+        except Exception:
+            pass
+
         self._stop_event.wait(timeout=delay)
         if self._stop_event.is_set():
             return
@@ -514,9 +521,31 @@ class VideoCapture:
         self._decoder = self._create_decoder()
         if self._decoder is None:
             logger.error("Could not create a decoder during reconnection.")
+            try:
+                from .web_server import update_pipeline_status
+                update_pipeline_status("ERROR")
+            except Exception:
+                pass
             return
         # _create_decoder opens NVDEC internally but not CPUDecoder
         if not self._decoder.is_opened():
             if not self._decoder.open(self._url):
                 logger.error("Decoder failed to open during reconnection.")
                 self._decoder = None
+                try:
+                    from .web_server import update_pipeline_status
+                    update_pipeline_status("ERROR")
+                except Exception:
+                    pass
+                return
+
+        # Successfully reconnected
+        try:
+            from .web_server import update_pipeline_status
+            update_pipeline_status(
+                "STREAMING",
+                resolution=f"{self._decoder.width}x{self._decoder.height}",
+                backend=self._decoder.backend_name,
+            )
+        except Exception:
+            pass

@@ -30,6 +30,12 @@ _db: Optional["DatabaseManager"] = None
 active_connections: List[WebSocket] = []
 _loop: Optional[asyncio.AbstractEventLoop] = None
 
+# Pipeline & Camera status
+pipeline_status = "OFFLINE"
+camera_info = "Not Connected"
+stream_resolution = "N/A"
+decoder_backend = "N/A"
+
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
@@ -265,11 +271,18 @@ async def dashboard():
                     <p style="font-size: 0.85rem; color: var(--text-muted);">Real-Time Store Visitor Counter</p>
                 </div>
             </div>
-            <div class="live-badge">
-                <span class="pulse-dot"></span>
-                LIVE STREAMING
+            <div class="live-badge" id="status-badge" style="background: rgba(156, 163, 175, 0.15); border: 1px solid rgba(156, 163, 175, 0.3); color: #9ca3af;">
+                <span class="pulse-dot" id="status-dot" style="background-color: #9ca3af;"></span>
+                <span id="status-text">PIPELINE OFFLINE</span>
             </div>
         </header>
+
+        <!-- Camera Information Info Bar -->
+        <div class="camera-info-bar" style="display: flex; flex-wrap: wrap; gap: 2rem; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 2rem; border: 1px solid var(--border-color); background: rgba(255, 255, 255, 0.02); padding: 0.6rem 1.2rem; border-radius: 12px; backdrop-filter: blur(8px);">
+            <div>📹 Camera Stream: <span id="info-camera" style="color: var(--text-main); font-weight: 500;">Not Connected</span></div>
+            <div>📐 Resolution: <span id="info-resolution" style="color: var(--text-main); font-weight: 500;">N/A</span></div>
+            <div>⚙️ Decoder Backend: <span id="info-backend" style="color: var(--text-main); font-weight: 500;">N/A</span></div>
+        </div>
 
         <!-- Stat Cards -->
         <div class="stats-grid">
@@ -364,6 +377,19 @@ async def dashboard():
                 const visitors = await visitorsRes.json();
                 const vBody = document.getElementById('visitors-table-body');
                 if (visitors.length === 0) {
+                // Update camera status details
+                updateStatusUI(
+                    stats.pipeline_status,
+                    stats.camera_info,
+                    stats.resolution,
+                    stats.backend
+                );
+
+                // Fetch visitors list
+                const visitorsRes = await fetch('/api/visitors');
+                const visitors = await visitorsRes.json();
+                const vBody = document.getElementById('visitors-table-body');
+                if (visitors.length === 0) {
                     vBody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted);">No visitors recorded yet today.</td></tr>';
                 } else {
                     vBody.innerHTML = visitors.map(v => `
@@ -397,6 +423,42 @@ async def dashboard():
             }
         }
 
+        function updateStatusUI(status, camera, resolution, backend) {
+            const badge = document.getElementById('status-badge');
+            const dot = document.getElementById('status-dot');
+            const text = document.getElementById('status-text');
+
+            document.getElementById('info-camera').innerText = camera || 'Not Connected';
+            document.getElementById('info-resolution').innerText = resolution || 'N/A';
+            document.getElementById('info-backend').innerText = backend || 'N/A';
+
+            if (status === 'STREAMING') {
+                badge.style.background = 'rgba(16, 185, 129, 0.15)';
+                badge.style.border = '1px solid rgba(16, 185, 129, 0.3)';
+                badge.style.color = '#10b981';
+                dot.style.backgroundColor = '#10b981';
+                text.innerText = 'LIVE STREAMING';
+            } else if (status === 'CONNECTING') {
+                badge.style.background = 'rgba(245, 158, 11, 0.15)';
+                badge.style.border = '1px solid rgba(245, 158, 11, 0.3)';
+                badge.style.color = '#f59e0b';
+                dot.style.backgroundColor = '#f59e0b';
+                text.innerText = 'CONNECTING CAMERA...';
+            } else if (status === 'ERROR') {
+                badge.style.background = 'rgba(239, 68, 68, 0.15)';
+                badge.style.border = '1px solid rgba(239, 68, 68, 0.3)';
+                badge.style.color = '#ef4444';
+                dot.style.backgroundColor = '#ef4444';
+                text.innerText = 'CONNECTION ERROR';
+            } else {
+                badge.style.background = 'rgba(156, 163, 175, 0.15)';
+                badge.style.border = '1px solid rgba(156, 163, 175, 0.3)';
+                badge.style.color = '#9ca3af';
+                dot.style.backgroundColor = '#9ca3af';
+                text.innerText = 'PIPELINE OFFLINE';
+            }
+        }
+
         function formatDate(isoStr) {
             if (!isoStr) return '-';
             try {
@@ -425,9 +487,10 @@ async def dashboard():
                 const data = JSON.parse(event.data);
                 console.log("⚡ Real-time update received:", data);
                 
-                // If it is a new visit, trigger dashboard refresh immediately
                 if (data.type === 'new_visit') {
                     updateDashboard();
+                } else if (data.type === 'status_update') {
+                    updateStatusUI(data.status, data.camera_info, data.resolution, data.backend);
                 }
             } catch (err) {
                 console.error("Error processing real-time message:", err);
@@ -448,10 +511,27 @@ async def dashboard():
 
 @app.get("/api/stats")
 async def get_stats():
-    """API Endpoint: Daily visitor statistics."""
-    if _db is None:
-        return {"error": "Database not initialized"}
-    return _db.get_daily_stats()
+    """API Endpoint: Daily visitor statistics and pipeline/camera status."""
+    stats = {}
+    if _db is not None:
+        stats = _db.get_daily_stats()
+    else:
+        stats = {
+            "unique_visitors_today": 0,
+            "total_visits_today": 0,
+            "unique_visitors_week": 0,
+            "unique_visitors_month": 0,
+            "unique_visitors_year": 0,
+            "total_registered_visitors": 0,
+            "date": datetime.now().strftime("%Y-%m-%d"),
+        }
+    stats.update({
+        "pipeline_status": pipeline_status,
+        "camera_info": camera_info,
+        "resolution": stream_resolution,
+        "backend": decoder_backend,
+    })
+    return stats
 
 
 @app.get("/api/visitors")
@@ -507,6 +587,28 @@ def notify_visit_event(visitor_id: str, confidence: float, timestamp: str) -> No
             "confidence": confidence,
             "timestamp": timestamp,
             "stats": stats,
+        }
+        asyncio.run_coroutine_threadsafe(broadcast_ws(event_data), _loop)
+
+
+def update_pipeline_status(status: str, camera: str = "", resolution: str = "", backend: str = "") -> None:
+    """Thread-safe function to update and broadcast camera/pipeline status changes instantly."""
+    global pipeline_status, camera_info, stream_resolution, decoder_backend, _loop
+    pipeline_status = status
+    if camera:
+        camera_info = camera
+    if resolution:
+        stream_resolution = resolution
+    if backend:
+        decoder_backend = backend
+
+    if _loop and active_connections:
+        event_data = {
+            "type": "status_update",
+            "status": pipeline_status,
+            "camera_info": camera_info,
+            "resolution": stream_resolution,
+            "backend": decoder_backend,
         }
         asyncio.run_coroutine_threadsafe(broadcast_ws(event_data), _loop)
 
