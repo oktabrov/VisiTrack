@@ -11,7 +11,8 @@ import logging
 import threading
 from typing import TYPE_CHECKING, Optional
 
-from fastapi import FastAPI
+import asyncio
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 import uvicorn
 
@@ -24,8 +25,10 @@ logger = logging.getLogger(__name__)
 # FastAPI App
 app = FastAPI(title="VisiTrack Dashboard", version="1.0.0")
 
-# Global reference set at initialization
+# Global variables for WebSockets and DB
 _db: Optional["DatabaseManager"] = None
+active_connections: List[WebSocket] = []
+_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -386,9 +389,39 @@ async def dashboard():
             }
         }
 
-        // Initial load & periodic 3s refresh
+        // Initial load & backup periodic 10s refresh
         updateDashboard();
-        setInterval(updateDashboard, 3000);
+        setInterval(updateDashboard, 10000);
+
+        // WebSockets for instant, real-time stats updates
+        let wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        let wsUrl = `${wsProtocol}//${window.location.host}/ws`;
+        let socket = new WebSocket(wsUrl);
+
+        socket.onopen = function(e) {
+            console.log("✅ WebSocket connection established.");
+        };
+
+        socket.onmessage = function(event) {
+            try {
+                const data = JSON.parse(event.data);
+                console.log("⚡ Real-time update received:", data);
+                
+                // If it is a new visit, trigger dashboard refresh immediately
+                if (data.type === 'new_visit') {
+                    updateDashboard();
+                }
+            } catch (err) {
+                console.error("Error processing real-time message:", err);
+            }
+        };
+
+        socket.onclose = function(event) {
+            console.log("❌ WebSocket closed. Reconnecting in 5 seconds...");
+            setTimeout(() => {
+                window.location.reload();
+            }, 5000);
+        };
     </script>
 </body>
 </html>"""
@@ -417,6 +450,47 @@ async def get_events(limit: int = 50):
     if _db is None:
         return []
     return _db.get_recent_visits(limit=limit)
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint to establish persistent real-time connections."""
+    global _loop
+    _loop = asyncio.get_running_loop()
+    await websocket.accept()
+    active_connections.append(websocket)
+    try:
+        while True:
+            # Keep connection alive, listen for ping/close
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        active_connections.remove(websocket)
+
+
+async def broadcast_ws(message: dict):
+    """Broadcast JSON message to all active WebSocket clients."""
+    for connection in active_connections:
+        try:
+            await connection.send_json(message)
+        except Exception:
+            pass
+
+
+def notify_visit_event(visitor_id: str, confidence: float, timestamp: str) -> None:
+    """Thread-safe function to broadcast visitor event to all open dashboards instantly."""
+    global _loop, _db
+    if _loop and active_connections:
+        stats = _db.get_daily_stats() if _db else {}
+        event_data = {
+            "type": "new_visit",
+            "visitor_id": visitor_id,
+            "confidence": confidence,
+            "timestamp": timestamp,
+            "stats": stats,
+        }
+        asyncio.run_coroutine_threadsafe(broadcast_ws(event_data), _loop)
 
 
 class WebServerThread(threading.Thread):

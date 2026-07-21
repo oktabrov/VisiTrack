@@ -18,6 +18,7 @@ import signal
 import sys
 import threading
 import time
+from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional
 
 import cv2
@@ -239,10 +240,20 @@ class InferencePipeline:
                     track.confidence,
                 )
                 if self._db is not None:
-                    self._db.record_visit(
+                    recorded = self._db.record_visit(
                         visitor_id=visitor_id,
                         confidence=track.confidence,
                     )
+                    if recorded:
+                        try:
+                            from .web_server import notify_visit_event
+                            notify_visit_event(
+                                visitor_id=visitor_id,
+                                confidence=track.confidence,
+                                timestamp=datetime.now().isoformat(),
+                            )
+                        except Exception as exc:
+                            logger.debug("Failed to broadcast WebSocket event: %s", exc)
 
             if track.is_confirmed and track.hits == track.age:
                 # Just confirmed
