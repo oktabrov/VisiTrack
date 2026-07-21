@@ -276,7 +276,22 @@ async def dashboard():
             <div class="stat-card">
                 <div class="stat-title">Unique Visitors Today</div>
                 <div class="stat-value" id="stat-unique-today">0</div>
-                <div class="stat-sub">Distinct people in store today</div>
+                <div class="stat-sub">Distinct people seen today</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-title">This Week</div>
+                <div class="stat-value" id="stat-unique-week">0</div>
+                <div class="stat-sub">Distinct people seen this week</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-title">This Month</div>
+                <div class="stat-value" id="stat-unique-month">0</div>
+                <div class="stat-sub">Distinct people seen this month</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-title">This Year</div>
+                <div class="stat-value" id="stat-unique-year">0</div>
+                <div class="stat-sub">Distinct people seen this year</div>
             </div>
             <div class="stat-card">
                 <div class="stat-title">Total Visit Events Today</div>
@@ -338,6 +353,9 @@ async def dashboard():
                 const statsRes = await fetch('/api/stats');
                 const stats = await statsRes.json();
                 document.getElementById('stat-unique-today').innerText = stats.unique_visitors_today;
+                document.getElementById('stat-unique-week').innerText = stats.unique_visitors_week;
+                document.getElementById('stat-unique-month').innerText = stats.unique_visitors_month;
+                document.getElementById('stat-unique-year').innerText = stats.unique_visitors_year;
                 document.getElementById('stat-visits-today').innerText = stats.total_visits_today;
                 document.getElementById('stat-total-reg').innerText = stats.total_registered_visitors;
 

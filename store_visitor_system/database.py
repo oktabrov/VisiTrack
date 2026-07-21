@@ -271,15 +271,24 @@ class DatabaseManager:
     # ── Reporting & Analytics Queries ────────────────────────────────
 
     def get_daily_stats(self) -> Dict[str, Any]:
-        """Return daily visitor summary statistics."""
-        today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        """Return visitor summary statistics (daily, weekly, monthly, yearly)."""
+        now = datetime.now()
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        week_start = today_start - timedelta(days=today_start.weekday())
+        month_start = today_start.replace(day=1)
+        year_start = today_start.replace(month=1, day=1)
+
         today_start_str = today_start.isoformat()
+        week_start_str = week_start.isoformat()
+        month_start_str = month_start.isoformat()
+        year_start_str = year_start.isoformat()
 
         with self._lock:
             conn = self._get_connection()
             try:
                 cur = conn.cursor()
                 if self._is_postgres:
+                    # Daily
                     cur.execute(
                         "SELECT COUNT(DISTINCT visitor_id) FROM visit_events WHERE timestamp >= %s",
                         (today_start,),
@@ -292,9 +301,31 @@ class DatabaseManager:
                     )
                     total_today = cur.fetchone()[0] or 0
 
+                    # Weekly
+                    cur.execute(
+                        "SELECT COUNT(DISTINCT visitor_id) FROM visit_events WHERE timestamp >= %s",
+                        (week_start,),
+                    )
+                    unique_week = cur.fetchone()[0] or 0
+
+                    # Monthly
+                    cur.execute(
+                        "SELECT COUNT(DISTINCT visitor_id) FROM visit_events WHERE timestamp >= %s",
+                        (month_start,),
+                    )
+                    unique_month = cur.fetchone()[0] or 0
+
+                    # Yearly
+                    cur.execute(
+                        "SELECT COUNT(DISTINCT visitor_id) FROM visit_events WHERE timestamp >= %s",
+                        (year_start,),
+                    )
+                    unique_year = cur.fetchone()[0] or 0
+
                     cur.execute("SELECT COUNT(*) FROM visitors")
                     total_registered = cur.fetchone()[0] or 0
                 else:
+                    # Daily
                     cur.execute(
                         "SELECT COUNT(DISTINCT visitor_id) FROM visit_events WHERE timestamp >= ?",
                         (today_start_str,),
@@ -307,12 +338,36 @@ class DatabaseManager:
                     )
                     total_today = cur.fetchone()[0] or 0
 
+                    # Weekly
+                    cur.execute(
+                        "SELECT COUNT(DISTINCT visitor_id) FROM visit_events WHERE timestamp >= ?",
+                        (week_start_str,),
+                    )
+                    unique_week = cur.fetchone()[0] or 0
+
+                    # Monthly
+                    cur.execute(
+                        "SELECT COUNT(DISTINCT visitor_id) FROM visit_events WHERE timestamp >= ?",
+                        (month_start_str,),
+                    )
+                    unique_month = cur.fetchone()[0] or 0
+
+                    # Yearly
+                    cur.execute(
+                        "SELECT COUNT(DISTINCT visitor_id) FROM visit_events WHERE timestamp >= ?",
+                        (year_start_str,),
+                    )
+                    unique_year = cur.fetchone()[0] or 0
+
                     cur.execute("SELECT COUNT(*) FROM visitors")
                     total_registered = cur.fetchone()[0] or 0
 
                 return {
                     "unique_visitors_today": unique_today,
                     "total_visits_today": total_today,
+                    "unique_visitors_week": unique_week,
+                    "unique_visitors_month": unique_month,
+                    "unique_visitors_year": unique_year,
                     "total_registered_visitors": total_registered,
                     "date": today_start.strftime("%Y-%m-%d"),
                 }
@@ -321,6 +376,9 @@ class DatabaseManager:
                 return {
                     "unique_visitors_today": 0,
                     "total_visits_today": 0,
+                    "unique_visitors_week": 0,
+                    "unique_visitors_month": 0,
+                    "unique_visitors_year": 0,
                     "total_registered_visitors": 0,
                     "date": today_start.strftime("%Y-%m-%d"),
                 }
