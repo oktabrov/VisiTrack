@@ -363,10 +363,11 @@ async def dashboard():
         </header>
 
         <!-- Camera Information Info Bar -->
-        <div class="camera-info-bar" style="display: flex; flex-wrap: wrap; gap: 2rem; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 2rem; border: 1px solid var(--border-color); background: rgba(255, 255, 255, 0.02); padding: 0.6rem 1.2rem; border-radius: 12px; backdrop-filter: blur(8px);">
+        <div class="camera-info-bar" style="display: flex; flex-wrap: wrap; gap: 2rem; align-items: center; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 2rem; border: 1px solid var(--border-color); background: rgba(255, 255, 255, 0.02); padding: 0.6rem 1.2rem; border-radius: 12px; backdrop-filter: blur(8px);">
             <div>📹 Camera Stream: <span id="info-camera" style="color: var(--text-main); font-weight: 500;">Not Connected</span></div>
             <div>📐 Resolution: <span id="info-resolution" style="color: var(--text-main); font-weight: 500;">N/A</span></div>
             <div>⚙️ Decoder Backend: <span id="info-backend" style="color: var(--text-main); font-weight: 500;">N/A</span></div>
+            <div style="margin-left: auto;">🕒 Local Time: <span id="info-time" style="color: var(--text-main); font-weight: 500;">N/A</span></div>
         </div>
 
         <!-- Primary/Today's Stats (Main Indicators) -->
@@ -558,6 +559,17 @@ async def dashboard():
                 return isoStr;
             }
         }
+
+        // Digital Clock ticking to the seconds
+        function updateClock() {
+            const timeEl = document.getElementById('info-time');
+            if (timeEl) {
+                const now = new Date();
+                timeEl.innerText = now.toLocaleString();
+            }
+        }
+        updateClock();
+        setInterval(updateClock, 1000);
 
         // Initial load & backup periodic 10s refresh
         updateDashboard();
