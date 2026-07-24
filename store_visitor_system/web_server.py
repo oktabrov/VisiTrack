@@ -576,6 +576,33 @@ async def dashboard():
             if (isStarting) return;
             isStarting = true;
 
+            // If the status is CONNECTION ERROR, prompt them to check/update the RTSP link directly
+            if (currentStatus === 'CONNECTION ERROR') {
+                const currentUrl = document.getElementById('info-camera').innerText;
+                const url = prompt(
+                    `VisiTrack failed to connect to the camera stream. Please check or enter a correct RTSP URL:\n\nCurrent: ${currentUrl}`,
+                    currentUrl
+                );
+                if (url && url.trim() !== '' && url.trim() !== currentUrl) {
+                    updateStatusUI('CONNECTING', '', '', '');
+                    try {
+                        const saveRes = await fetch('/api/save_rtsp_url', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ rtsp_url: url.trim() })
+                        });
+                        const saveResult = await saveRes.json();
+                        console.log("Save RTSP response:", saveResult);
+                    } catch (err) {
+                        console.error("Error saving RTSP URL:", err);
+                        updateStatusUI('ERROR', '', '', '');
+                    } finally {
+                        isStarting = false;
+                    }
+                    return;
+                }
+            }
+
             // Instantly transition to Connecting UI state
             updateStatusUI('CONNECTING', '', '', '');
 
@@ -585,9 +612,9 @@ async def dashboard():
                 console.log("Pipeline start response:", result);
 
                 if (result.status === 'missing_rtsp_url') {
-                    // Prompt user to enter RTSP URL
+                    // Prompt user to enter RTSP URL using backticks to avoid Python escape newline errors
                     const url = prompt(
-                        "RTSP Camera Stream URL is missing or set to default placeholder.\n\nPlease enter your RTSP URL (e.g. rtsp://admin:pass@192.168.1.50:554/stream):"
+                        `RTSP Camera Stream URL is missing or set to default placeholder.\n\nPlease enter your RTSP URL (e.g. rtsp://admin:pass@192.168.1.50:554/stream):`
                     );
                     if (url && url.trim() !== '') {
                         const saveRes = await fetch('/api/save_rtsp_url', {
