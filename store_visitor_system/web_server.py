@@ -11,6 +11,9 @@ import logging
 import threading
 from typing import TYPE_CHECKING, Optional
 
+import os
+from pathlib import Path
+from pydantic import BaseModel
 import asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
@@ -128,6 +131,18 @@ async def dashboard():
             border-radius: 20px;
             font-size: 0.85rem;
             font-weight: 500;
+            font-family: inherit;
+            cursor: pointer;
+            outline: none;
+            transition: filter 0.2s ease, transform 0.1s ease;
+        }
+
+        .live-badge:hover {
+            filter: brightness(1.2);
+        }
+
+        .live-badge:active {
+            transform: scale(0.97);
         }
 
         .pulse-dot {
@@ -341,10 +356,10 @@ async def dashboard():
                     <p style="font-size: 0.85rem; color: var(--text-muted);">Real-Time Store Visitor Counter</p>
                 </div>
             </div>
-            <div class="live-badge" id="status-badge" style="background: rgba(156, 163, 175, 0.15); border: 1px solid rgba(156, 163, 175, 0.3); color: #9ca3af;">
+            <button class="live-badge" id="status-badge" style="background: rgba(156, 163, 175, 0.15); border: 1px solid rgba(156, 163, 175, 0.3); color: #9ca3af;" onclick="handleStatusClick()">
                 <span class="pulse-dot" id="status-dot" style="background-color: #9ca3af;"></span>
                 <span id="status-text">PIPELINE OFFLINE</span>
-            </div>
+            </button>
         </header>
 
         <!-- Camera Information Info Bar -->
@@ -548,6 +563,53 @@ async def dashboard():
         updateDashboard();
         setInterval(updateDashboard, 10000);
 
+        let isStarting = false;
+        async function handleStatusClick() {
+            const badge = document.getElementById('status-badge');
+            const text = document.getElementById('status-text');
+
+            const currentStatus = text.innerText;
+            if (currentStatus === 'LIVE STREAMING' || currentStatus === 'CONNECTING CAMERA...') {
+                return;
+            }
+
+            if (isStarting) return;
+            isStarting = true;
+
+            // Instantly transition to Connecting UI state
+            updateStatusUI('CONNECTING', '', '', '');
+
+            try {
+                const res = await fetch('/api/start_pipeline', { method: 'POST' });
+                const result = await res.json();
+                console.log("Pipeline start response:", result);
+
+                if (result.status === 'missing_rtsp_url') {
+                    // Prompt user to enter RTSP URL
+                    const url = prompt(
+                        "RTSP Camera Stream URL is missing or set to default placeholder.\n\nPlease enter your RTSP URL (e.g. rtsp://admin:pass@192.168.1.50:554/stream):"
+                    );
+                    if (url && url.trim() !== '') {
+                        const saveRes = await fetch('/api/save_rtsp_url', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ rtsp_url: url.trim() })
+                        });
+                        const saveResult = await saveRes.json();
+                        console.log("Save RTSP response:", saveResult);
+                    } else {
+                        // User cancelled
+                        updateStatusUI('OFFLINE', '', '', '');
+                    }
+                }
+            } catch (err) {
+                console.error("Error launching pipeline:", err);
+                updateStatusUI('ERROR', '', '', '');
+            } finally {
+                isStarting = false;
+            }
+        }
+
         // WebSockets for instant, real-time stats updates
         let wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         let wsUrl = `${wsProtocol}//${window.location.host}/ws`;
@@ -688,6 +750,99 @@ def update_pipeline_status(status: str, camera: str = "", resolution: str = "", 
         asyncio.run_coroutine_threadsafe(broadcast_ws(event_data), _loop)
 
 
+class RTSPConfig(BaseModel):
+    rtsp_url: str
+
+
+@app.post("/api/save_rtsp_url")
+async def save_rtsp_url(data: RTSPConfig):
+    """Save the RTSP URL entered by the user to .env file and trigger pipeline start."""
+    global pipeline_status, _pipeline_thread
+    url = data.rtsp_url.strip()
+    if not url:
+        return {"status": "error", "message": "RTSP URL cannot be empty"}
+
+    # Update environment variables so Config instantiations see the update
+    os.environ["RTSP_URL"] = url
+
+    # Write to local .env file
+    env_path = Path(".env")
+    lines = []
+    updated = False
+    if env_path.exists():
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip().startswith("RTSP_URL="):
+                    lines.append(f"RTSP_URL={url}\n")
+                    updated = True
+                else:
+                    lines.append(line)
+    
+    if not updated:
+        lines.append(f"\nRTSP_URL={url}\n")
+
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.writelines(lines)
+
+    logger.info("Saved new RTSP URL to .env file: %s", url)
+
+    # Automatically start pipeline
+    if pipeline_status not in ("STREAMING", "CONNECTING"):
+        _pipeline_thread = PipelineRunnerThread(_db)
+        _pipeline_thread.start()
+        return {"status": "started"}
+    
+    return {"status": "already_running"}
+
+
+_pipeline_thread: Optional[PipelineRunnerThread] = None
+
+
+@app.post("/api/start_pipeline")
+async def start_pipeline():
+    """Trigger the VisiTrack AI video processing pipeline execution."""
+    global pipeline_status, _pipeline_thread
+    if pipeline_status in ("STREAMING", "CONNECTING"):
+        return {"status": "already_running"}
+
+    # Check if RTSP URL is missing or set to placeholder
+    try:
+        from .config import Config
+        config = Config()
+        url = config.rtsp_url
+        if not url or url.strip() == "" or "192.168.1.100" in url:
+            return {"status": "missing_rtsp_url"}
+    except Exception as exc:
+        logger.error("Failed to validate RTSP URL configuration: %s", exc)
+
+    _pipeline_thread = PipelineRunnerThread(_db)
+    _pipeline_thread.start()
+    return {"status": "started"}
+
+
+class PipelineRunnerThread(threading.Thread):
+    """Runs VisiTrack AI/video inference pipeline in a background thread."""
+
+    def __init__(self, db_manager: "DatabaseManager") -> None:
+        super().__init__(name="VisiTrack-PipelineRunnerThread", daemon=True)
+        self._db = db_manager
+
+    def run(self) -> None:
+        logger.info("Initializing VisiTrack AI Pipeline runner thread …")
+        try:
+            from .config import Config
+            from .gpu import GPUManager
+            from .pipeline import InferencePipeline
+
+            config = Config()
+            gpu = GPUManager(config)
+            
+            gpu.select_device()
+            pipeline = InferencePipeline(gpu, config, db_manager=self._db)
+            pipeline.run()
+        except Exception as exc:
+            logger.error("Failed to run AI pipeline thread: %s", exc)
+            update_pipeline_status("ERROR")
 class WebServerThread(threading.Thread):
     """Runs Uvicorn Web Server in a background thread."""
 
