@@ -120,6 +120,11 @@ def main() -> None:
         web_thread = WebServerThread(db, port=config.web_server_port)
         web_thread.start()
         logger.info("🌐 Web Dashboard live at: http://localhost:%d", config.web_server_port)
+        try:
+            from .web_server import update_pipeline_status
+            update_pipeline_status("LOADING MODELS...", camera=config.rtsp_url)
+        except Exception:
+            pass
 
     # ── Step 5: Load models & start pipeline ─────────────────────────
     # Models are loaded inside InferencePipeline.__init__

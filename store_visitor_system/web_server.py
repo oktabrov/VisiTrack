@@ -562,12 +562,20 @@ async def dashboard():
                 badge.style.color = '#10b981';
                 dot.style.backgroundColor = '#10b981';
                 text.innerText = 'LIVE STREAMING';
-            } else if (status === 'CONNECTING') {
+
+                // Ensure stream image tag is active and attempting stream reload if placeholder was showing
+                const streamImg = document.getElementById('stream-img');
+                const placeholder = document.getElementById('stream-placeholder');
+                if (placeholder && placeholder.style.display !== 'none') {
+                    placeholder.style.display = 'none';
+                    if (streamImg) streamImg.src = '/video_feed?t=' + Date.now();
+                }
+            } else if (status === 'CONNECTING' || status === 'LOADING MODELS...') {
                 badge.style.background = 'rgba(245, 158, 11, 0.15)';
                 badge.style.border = '1px solid rgba(245, 158, 11, 0.3)';
                 badge.style.color = '#f59e0b';
                 dot.style.backgroundColor = '#f59e0b';
-                text.innerText = 'CONNECTING CAMERA...';
+                text.innerText = status === 'LOADING MODELS...' ? 'LOADING MODELS...' : 'CONNECTING CAMERA...';
             } else if (status === 'ERROR') {
                 badge.style.background = 'rgba(239, 68, 68, 0.15)';
                 badge.style.border = '1px solid rgba(239, 68, 68, 0.3)';
@@ -604,9 +612,9 @@ async def dashboard():
         updateClock();
         setInterval(updateClock, 1000);
 
-        // Initial load & backup periodic 10s refresh
+        // Initial load & fast periodic 2s refresh
         updateDashboard();
-        setInterval(updateDashboard, 10000);
+        setInterval(updateDashboard, 2000);
 
         // Door Zone Canvas Drawing Logic
         let doorPoints = [];
@@ -742,6 +750,9 @@ async def dashboard():
         function handleStreamError(img) {
             const placeholder = document.getElementById('stream-placeholder');
             if (placeholder) placeholder.style.display = 'block';
+            setTimeout(() => {
+                img.src = '/video_feed?t=' + Date.now();
+            }, 3000);
         }
 
         function handleStreamLoad() {

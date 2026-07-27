@@ -94,9 +94,13 @@ class InferencePipeline:
 
     def run(self) -> None:
         """Start the pipeline and block until interrupted."""
-        # Register signal handlers for graceful shutdown
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
+        # Register signal handlers for graceful shutdown if running in main thread
+        if threading.current_thread() is threading.main_thread():
+            try:
+                signal.signal(signal.SIGINT, self._signal_handler)
+                signal.signal(signal.SIGTERM, self._signal_handler)
+            except (ValueError, Exception):
+                pass
 
         try:
             # Set status to CONNECTING

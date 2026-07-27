@@ -87,6 +87,9 @@ class NVDECDecoder(_DecoderBase):
         self._fps: float = 0.0
         self._url: str = ""
         self._frame_size: int = 0
+        self._latest_raw_frame: Optional[bytes] = None
+        self._drainer_thread: Optional[threading.Thread] = None
+        self._stop_drainer = threading.Event()
 
     # ── Static check ─────────────────────────────────────────────────
 
@@ -125,13 +128,25 @@ class NVDECDecoder(_DecoderBase):
         # Start the decode process
         return self._start_ffmpeg(url)
 
+    def _drain_stdout_loop(self) -> None:
+        """Dedicated thread to continuously drain FFmpeg stdout pipe and keep ONLY the latest frame."""
+        while not self._stop_drainer.is_set() and self._process is not None and self._process.stdout is not None:
+            try:
+                raw = self._process.stdout.read(self._frame_size)
+                if not raw or len(raw) != self._frame_size:
+                    time.sleep(0.005)
+                    continue
+                self._latest_raw_frame = raw
+            except Exception:
+                break
+
     def read(self) -> Tuple[bool, Optional[np.ndarray]]:
         if self._process is None or self._process.poll() is not None:
             return False, None
+        raw = self._latest_raw_frame
+        if raw is None or len(raw) != self._frame_size:
+            return False, None
         try:
-            raw = self._process.stdout.read(self._frame_size)  # type: ignore[union-attr]
-            if len(raw) != self._frame_size:
-                return False, None
             frame = np.frombuffer(raw, dtype=np.uint8).reshape(
                 (self._height, self._width, 3)
             )
@@ -141,10 +156,11 @@ class NVDECDecoder(_DecoderBase):
             return False, None
 
     def release(self) -> None:
+        self._stop_drainer.set()
         if self._process is not None:
             try:
                 self._process.kill()
-                self._process.wait(timeout=5)
+                self._process.wait(timeout=2)
             except Exception:
                 pass
             self._process = None
@@ -191,7 +207,6 @@ class NVDECDecoder(_DecoderBase):
             if len(parts) >= 3:
                 self._width = int(parts[0])
                 self._height = int(parts[1])
-                # r_frame_rate is like "30/1"
                 fps_parts = parts[2].split("/")
                 if len(fps_parts) == 2 and int(fps_parts[1]) != 0:
                     self._fps = int(fps_parts[0]) / int(fps_parts[1])
@@ -209,18 +224,24 @@ class NVDECDecoder(_DecoderBase):
             return False
 
     def _start_ffmpeg(self, url: str) -> bool:
-        """Launch the FFmpeg decode subprocess with NVDEC."""
+        """Launch the FFmpeg decode subprocess with low-latency NVDEC parameters."""
         cmd = [
             "ffmpeg",
+            "-loglevel", "quiet",
+            "-flags", "low_delay",
+            "-fflags", "nobuffer+discardcorrupt",
+            "-probesize", "32",
+            "-analyzeduration", "0",
             "-hwaccel", "cuda",
             "-hwaccel_device", str(self._gpu_index),
             "-rtsp_transport", "tcp",
             "-i", url,
-            "-f", "rawvideo",
-            "-pix_fmt", "bgr24",
             "-an",                      # no audio
             "-sn",                      # no subtitles
-            "-v", "warning",
+            "-dn",                      # no data
+            "-vsync", "0",
+            "-pix_fmt", "bgr24",
+            "-f", "rawvideo",
             "pipe:1",
         ]
         try:
@@ -228,15 +249,22 @@ class NVDECDecoder(_DecoderBase):
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                bufsize=self._frame_size * 4,
+                bufsize=self._frame_size * 2,
             )
-            # Give it a moment to fail (e.g. bad codec)
             time.sleep(0.5)
             if self._process.poll() is not None:
                 stderr = self._process.stderr.read().decode(errors="replace")  # type: ignore[union-attr]
                 logger.warning("FFmpeg NVDEC exited early: %s", stderr[:500])
                 return False
-            logger.info("NVDEC GPU decoder started.")
+
+            self._stop_drainer.clear()
+            self._latest_raw_frame = None
+            self._drainer_thread = threading.Thread(
+                target=self._drain_stdout_loop, daemon=True, name="nvdec-pipe-drainer"
+            )
+            self._drainer_thread.start()
+
+            logger.info("NVDEC GPU decoder started with zero-latency pipe drainer.")
             return True
         except FileNotFoundError:
             logger.warning("FFmpeg binary not found.")
@@ -289,11 +317,12 @@ class CPUDecoder(_DecoderBase):
         self._fps: float = 0.0
 
     def open(self, url: str) -> bool:
-        os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp")
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay"
         self._cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
         if not self._cap.isOpened():
             logger.warning("OpenCV CPU decoder failed to open: %s", url)
             return False
+        self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         self._width = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self._height = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self._fps = self._cap.get(cv2.CAP_PROP_FPS) or 25.0
@@ -306,7 +335,10 @@ class CPUDecoder(_DecoderBase):
     def read(self) -> Tuple[bool, Optional[np.ndarray]]:
         if self._cap is None:
             return False, None
-        ret, frame = self._cap.read()
+        # Drain internal OpenCV buffer to return latest real-time frame
+        for _ in range(3):
+            self._cap.grab()
+        ret, frame = self._cap.retrieve()
         return ret, frame if ret else None
 
     def release(self) -> None:
@@ -468,8 +500,7 @@ class VideoCapture:
 
             ret, frame = self._decoder.read()
             if not ret or frame is None:
-                logger.warning("Frame read failed — attempting reconnect.")
-                self._decoder.release()
+                time.sleep(0.005)
                 continue
 
             # Reset backoff on successful read
