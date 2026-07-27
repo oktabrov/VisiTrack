@@ -19,6 +19,10 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import warnings
+
+# Mute third-party library TracerWarning & FutureWarning notices for clean terminal logs
+warnings.filterwarnings("ignore")
 
 # Fix Windows console encoding for Unicode characters in banners
 if sys.platform == "win32":
