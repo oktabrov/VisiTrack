@@ -112,7 +112,7 @@ class Config:
 
     # ── Detection / Recognition Thresholds ───────────────────────────────
     detection_confidence: float = field(
-        default_factory=lambda: _env_float("DETECTION_CONFIDENCE", 0.5)
+        default_factory=lambda: _env_float("DETECTION_CONFIDENCE", 0.35)
     )
     face_detection_threshold: float = field(
         default_factory=lambda: _env_float("FACE_DETECTION_THRESHOLD", 0.5)
@@ -142,7 +142,7 @@ class Config:
         default_factory=lambda: _env_int("TRACK_MAX_AGE", 30)
     )
     track_min_hits: int = field(
-        default_factory=lambda: _env_int("TRACK_MIN_HITS", 3)
+        default_factory=lambda: _env_int("TRACK_MIN_HITS", 1)
     )
     track_iou_threshold: float = field(
         default_factory=lambda: _env_float("TRACK_IOU_THRESHOLD", 0.3)

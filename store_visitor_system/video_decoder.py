@@ -18,7 +18,7 @@ import subprocess
 import threading
 import time
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -394,6 +394,7 @@ class VideoCapture:
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._backend_name: str = "unknown"
+        self.on_frame_callback: Optional[Callable[[np.ndarray], None]] = None
 
     # ── Public API ───────────────────────────────────────────────────
 
@@ -502,6 +503,12 @@ class VideoCapture:
             if not ret or frame is None:
                 time.sleep(0.005)
                 continue
+
+            if self.on_frame_callback is not None:
+                try:
+                    self.on_frame_callback(frame)
+                except Exception:
+                    pass
 
             # Reset backoff on successful read
             reconnect_delay = self._config.reconnect_delay

@@ -110,6 +110,7 @@ class InferencePipeline:
             except Exception:
                 pass
 
+            self._video.on_frame_callback = self._annotate_and_broadcast_frame
             self._video.start()
             self._perf.start()
 
@@ -239,51 +240,58 @@ class InferencePipeline:
                 face_embeddings=face_embeddings_per_person,
             )
 
-        # Create annotated frame for live dashboard video stream
-        annotated_frame = frame.copy()
+        # Step 6: Log events (with door zone filtering if enabled)
+        self._log_events(tracks, door_poly)
 
-        # Render Door Zone overlay if enabled
-        if door_poly is not None:
-            overlay = annotated_frame.copy()
-            cv2.fillPoly(overlay, [door_poly], (16, 185, 129))
-            cv2.addWeighted(overlay, 0.2, annotated_frame, 0.8, 0, annotated_frame)
-            cv2.polylines(annotated_frame, [door_poly], isClosed=True, color=(16, 185, 129), thickness=2)
-            pt = door_poly[0]
-            cv2.putText(annotated_frame, "DOOR ZONE (ACTIVE)", (int(pt[0]), max(20, int(pt[1]) - 10)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (16, 185, 129), 2)
-
-        # Render person bounding boxes and Visitor ID badges above heads
-        for track in tracks:
-            x1, y1, x2, y2 = map(int, track.bbox)
-            visitor_id = f"VISITOR-{track.track_id:03d}"
-            conf_pct = int(track.confidence * 100)
-
-            # Emerald green box for confirmed, cyan for new
-            box_color = (16, 185, 129) if track.is_confirmed else (245, 158, 11)
-            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), box_color, 2)
-
-            # Visitor ID Badge directly ABOVE HEAD
-            label = f"{visitor_id} ({conf_pct}%)"
-            (text_w, text_h), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
-            
-            # Position box above head
-            badge_y2 = max(y1, text_h + 10)
-            badge_y1 = badge_y2 - text_h - 8
-            cv2.rectangle(annotated_frame, (x1, badge_y1), (x1 + text_w + 10, badge_y2), box_color, -1)
-            cv2.putText(annotated_frame, label, (x1 + 5, badge_y2 - 4),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
-
-        # Broadcast latest frame to web server stream
+    def _annotate_and_broadcast_frame(self, frame: np.ndarray) -> None:
+        """Fast real-time frame annotator broadcasting 20-30 FPS stream to web dashboard."""
         try:
-            ret, jpeg = cv2.imencode('.jpg', annotated_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+            h, w = frame.shape[:2]
+            target_w, target_h = 1280, 720
+            scale_x = target_w / float(w)
+            scale_y = target_h / float(h)
+            small_frame = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_NEAREST)
+
+            from .config import load_door_roi
+            door_roi = load_door_roi()
+            if door_roi.get("enabled") and door_roi.get("points") and len(door_roi["points"]) >= 3:
+                door_poly = np.array(door_roi["points"], dtype=np.float32)
+                scaled_poly = (door_poly * [scale_x, scale_y]).astype(np.int32)
+                overlay = small_frame.copy()
+                cv2.fillPoly(overlay, [scaled_poly], (16, 185, 129))
+                cv2.addWeighted(overlay, 0.2, small_frame, 0.8, 0, small_frame)
+                cv2.polylines(small_frame, [scaled_poly], isClosed=True, color=(16, 185, 129), thickness=2)
+                pt = scaled_poly[0]
+                cv2.putText(small_frame, "DOOR ZONE (ACTIVE)", (int(pt[0]), max(20, int(pt[1]) - 10)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (16, 185, 129), 2)
+
+            # Draw active tracks (including brand-new detected persons)
+            active_tracks = self._tracker.active_tracks
+            for track in active_tracks:
+                x1, y1, x2, y2 = track.bbox
+                sx1, sy1, sx2, sy2 = int(x1 * scale_x), int(y1 * scale_y), int(x2 * scale_x), int(y2 * scale_y)
+                visitor_id = f"VISITOR-{track.track_id:03d}"
+                conf_pct = int(track.confidence * 100)
+                box_color = (16, 185, 129) if track.is_confirmed else (245, 158, 11)
+
+                # Bounding box
+                cv2.rectangle(small_frame, (sx1, sy1), (sx2, sy2), box_color, 2)
+
+                # Visitor ID Label directly ABOVE HEAD
+                label = f"{visitor_id} ({conf_pct}%)"
+                (text_w, text_h), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
+                badge_y2 = max(sy1, text_h + 8)
+                badge_y1 = badge_y2 - text_h - 6
+                cv2.rectangle(small_frame, (sx1, badge_y1), (sx1 + text_w + 8, badge_y2), box_color, -1)
+                cv2.putText(small_frame, label, (sx1 + 4, badge_y2 - 3),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2, cv2.LINE_AA)
+
+            ret, jpeg = cv2.imencode('.jpg', small_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
             if ret:
                 from .web_server import update_latest_frame
                 update_latest_frame(jpeg.tobytes())
         except Exception:
             pass
-
-        # Step 6: Log events (with door zone filtering if enabled)
-        self._log_events(tracks, door_poly)
 
     def _extract_crops(
         self, frame: np.ndarray, detections: List["Detection"]

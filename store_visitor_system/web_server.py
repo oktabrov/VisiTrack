@@ -998,13 +998,15 @@ async def save_door_roi_endpoint(data: DoorROIPayload):
 def generate_mjpeg_stream():
     """MJPEG stream generator serving real-time annotated camera frames."""
     global _latest_frame_jpeg
+    last_frame = None
     while True:
-        if _latest_frame_jpeg is not None:
+        if _latest_frame_jpeg is not None and _latest_frame_jpeg is not last_frame:
+            last_frame = _latest_frame_jpeg
             yield (
                 b"--frame\r\n"
                 b"Content-Type: image/jpeg\r\n\r\n" + _latest_frame_jpeg + b"\r\n"
             )
-        time.sleep(0.04)
+        time.sleep(0.015)
 
 
 @app.get("/video_feed")
