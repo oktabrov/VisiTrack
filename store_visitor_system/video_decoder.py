@@ -214,8 +214,6 @@ class NVDECDecoder(_DecoderBase):
             "ffmpeg",
             "-hwaccel", "cuda",
             "-hwaccel_device", str(self._gpu_index),
-            "-hwaccel_output_format", "cuda",
-            "-c:v", "h264_cuvid",
             "-rtsp_transport", "tcp",
             "-i", url,
             "-f", "rawvideo",
@@ -237,9 +235,8 @@ class NVDECDecoder(_DecoderBase):
             if self._process.poll() is not None:
                 stderr = self._process.stderr.read().decode(errors="replace")  # type: ignore[union-attr]
                 logger.warning("FFmpeg NVDEC exited early: %s", stderr[:500])
-                # Try HEVC fallback
-                return self._start_ffmpeg_hevc(url)
-            logger.info("NVDEC decoder started (h264_cuvid).")
+                return False
+            logger.info("NVDEC GPU decoder started.")
             return True
         except FileNotFoundError:
             logger.warning("FFmpeg binary not found.")
