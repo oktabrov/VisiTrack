@@ -195,42 +195,91 @@ class InferencePipeline:
 
     def _process_frame(self, frame: np.ndarray) -> None:
         """Process a single frame through the full pipeline."""
+        # Load door ROI configuration
+        from .config import load_door_roi
+        door_roi = load_door_roi()
+        door_poly = None
+        if door_roi.get("enabled") and door_roi.get("points") and len(door_roi["points"]) >= 3:
+            door_poly = np.array(door_roi["points"], dtype=np.int32)
+
         # Step 1: Person detection
         with self._perf.measure_detection():
             detections = self._detector.detect(frame)
 
         if not detections:
-            self._tracker.update([])
-            return
+            tracks = self._tracker.update([])
+        else:
+            # Step 2: Crop persons from the frame
+            person_crops = self._extract_crops(frame, detections)
 
-        # Step 2: Crop persons from the frame
-        person_crops = self._extract_crops(frame, detections)
+            # Step 3: Face detection + embedding (batched)
+            face_embeddings_per_person: List[Optional[np.ndarray]] = []
+            with self._perf.measure_face():
+                face_results = self._face_proc.process_crops(person_crops)
+                for results in face_results:
+                    if results and results[0].embedding is not None:
+                        face_embeddings_per_person.append(results[0].embedding)
+                    else:
+                        face_embeddings_per_person.append(None)
 
-        # Step 3: Face detection + embedding (batched)
-        face_embeddings_per_person: List[Optional[np.ndarray]] = []
-        with self._perf.measure_face():
-            face_results = self._face_proc.process_crops(person_crops)
-            for results in face_results:
-                if results and results[0].embedding is not None:
-                    face_embeddings_per_person.append(results[0].embedding)
-                else:
-                    face_embeddings_per_person.append(None)
+            # Step 4: ReID feature extraction (batched)
+            reid_features: Optional[np.ndarray] = None
+            if person_crops:
+                with self._perf.measure_reid():
+                    reid_features = self._reid.extract_features(person_crops)
 
-        # Step 4: ReID feature extraction (batched)
-        reid_features: Optional[np.ndarray] = None
-        if person_crops:
-            with self._perf.measure_reid():
-                reid_features = self._reid.extract_features(person_crops)
+            # Step 5: Update tracker
+            tracks = self._tracker.update(
+                detections,
+                reid_features=reid_features,
+                face_embeddings=face_embeddings_per_person,
+            )
 
-        # Step 5: Update tracker
-        tracks = self._tracker.update(
-            detections,
-            reid_features=reid_features,
-            face_embeddings=face_embeddings_per_person,
-        )
+        # Create annotated frame for live dashboard video stream
+        annotated_frame = frame.copy()
 
-        # Step 6: Log events
-        self._log_events(tracks, detections)
+        # Render Door Zone overlay if enabled
+        if door_poly is not None:
+            overlay = annotated_frame.copy()
+            cv2.fillPoly(overlay, [door_poly], (16, 185, 129))
+            cv2.addWeighted(overlay, 0.2, annotated_frame, 0.8, 0, annotated_frame)
+            cv2.polylines(annotated_frame, [door_poly], isClosed=True, color=(16, 185, 129), thickness=2)
+            pt = door_poly[0]
+            cv2.putText(annotated_frame, "DOOR ZONE (ACTIVE)", (int(pt[0]), max(20, int(pt[1]) - 10)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (16, 185, 129), 2)
+
+        # Render person bounding boxes and Visitor ID badges above heads
+        for track in tracks:
+            x1, y1, x2, y2 = map(int, track.bbox)
+            visitor_id = f"VISITOR-{track.track_id:03d}"
+            conf_pct = int(track.confidence * 100)
+
+            # Emerald green box for confirmed, cyan for new
+            box_color = (16, 185, 129) if track.is_confirmed else (245, 158, 11)
+            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), box_color, 2)
+
+            # Visitor ID Badge directly ABOVE HEAD
+            label = f"{visitor_id} ({conf_pct}%)"
+            (text_w, text_h), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
+            
+            # Position box above head
+            badge_y2 = max(y1, text_h + 10)
+            badge_y1 = badge_y2 - text_h - 8
+            cv2.rectangle(annotated_frame, (x1, badge_y1), (x1 + text_w + 10, badge_y2), box_color, -1)
+            cv2.putText(annotated_frame, label, (x1 + 5, badge_y2 - 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
+
+        # Broadcast latest frame to web server stream
+        try:
+            ret, jpeg = cv2.imencode('.jpg', annotated_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+            if ret:
+                from .web_server import update_latest_frame
+                update_latest_frame(jpeg.tobytes())
+        except Exception:
+            pass
+
+        # Step 6: Log events (with door zone filtering if enabled)
+        self._log_events(tracks, door_poly)
 
     def _extract_crops(
         self, frame: np.ndarray, detections: List["Detection"]
@@ -245,7 +294,6 @@ class InferencePipeline:
             y2 = min(h, int(det.y2))
 
             if x2 <= x1 or y2 <= y1:
-                # Degenerate box — provide a minimal crop
                 crops.append(np.zeros((64, 64, 3), dtype=np.uint8))
                 continue
 
@@ -256,11 +304,20 @@ class InferencePipeline:
     def _log_events(
         self,
         tracks: list,
-        detections: List["Detection"],
+        door_poly: Optional[np.ndarray] = None,
     ) -> None:
         """Log notable tracking events and record visits in database."""
         for track in tracks:
             visitor_id = f"VISITOR-{track.track_id:03d}"
+
+            # If door zone filtering is active, verify person intersects the door
+            if door_poly is not None:
+                x1, y1, x2, y2 = map(int, track.bbox)
+                # Bottom-center point of person bounding box (feet position entering doorway)
+                feet_point = (float((x1 + x2) / 2), float(y2))
+                is_inside = cv2.pointPolygonTest(door_poly, feet_point, False) >= 0
+                if not is_inside:
+                    continue
 
             if track.hits == 1:
                 logger.info(
@@ -286,7 +343,6 @@ class InferencePipeline:
                             logger.debug("Failed to broadcast WebSocket event: %s", exc)
 
             if track.is_confirmed and track.hits == track.age:
-                # Just confirmed
                 if track.face_embedding is not None:
                     logger.info(
                         "👤 Track #%d (%s) confirmed with face embedding.",

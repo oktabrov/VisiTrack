@@ -7,6 +7,7 @@ This is the single source of truth for every tunable parameter in the system.
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -222,3 +223,26 @@ class Config:
             f"  Perf Log Interval:    {self.perf_log_interval}s",
         ]
         return "\n".join(lines)
+
+
+DOOR_ROI_FILE = Path("door_roi.json")
+
+
+def load_door_roi() -> dict:
+    """Load the door ROI polygon points and enable status from door_roi.json."""
+    if DOOR_ROI_FILE.exists():
+        try:
+            with open(DOOR_ROI_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"enabled": False, "points": []}
+
+
+def save_door_roi(data: dict) -> None:
+    """Save the door ROI polygon points and enable status to door_roi.json."""
+    try:
+        with open(DOOR_ROI_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        pass

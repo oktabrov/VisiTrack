@@ -9,14 +9,15 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import TYPE_CHECKING, Optional
+import time
+from typing import TYPE_CHECKING, List, Optional
 
 import os
 from pathlib import Path
 from pydantic import BaseModel
 import asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 import uvicorn
 
 if TYPE_CHECKING:
@@ -28,16 +29,23 @@ logger = logging.getLogger(__name__)
 # FastAPI App
 app = FastAPI(title="VisiTrack Dashboard", version="1.0.0")
 
-# Global variables for WebSockets and DB
+# Global variables for WebSockets, DB, and Live Frame Stream
 _db: Optional["DatabaseManager"] = None
 active_connections: List[WebSocket] = []
 _loop: Optional[asyncio.AbstractEventLoop] = None
+_latest_frame_jpeg: Optional[bytes] = None
 
 # Pipeline & Camera status
 pipeline_status = "OFFLINE"
 camera_info = "Not Connected"
 stream_resolution = "N/A"
 decoder_backend = "N/A"
+
+
+def update_latest_frame(jpeg_bytes: bytes) -> None:
+    """Update global latest frame for live MJPEG video streaming endpoint."""
+    global _latest_frame_jpeg
+    _latest_frame_jpeg = jpeg_bytes
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -370,6 +378,31 @@ async def dashboard():
             <div style="margin-left: auto;">🕒 Local Time: <span id="info-time" style="color: var(--text-main); font-weight: 500;">N/A</span></div>
         </div>
 
+        <!-- Live Camera Stream & Interactive Door Marking Tool -->
+        <div class="section-title">
+            📹 Live Camera Stream & Door Marking Tool
+        </div>
+        <div class="table-card" style="padding: 1.5rem; margin-bottom: 2.5rem; background: var(--bg-card); border-radius: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 1rem;">
+                <div style="font-size: 0.85rem; color: var(--text-muted);">
+                    Click directly on the camera stream below to draw the door polygon boundary.
+                </div>
+                <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+                    <button class="btn-action" id="btn-toggle-roi" onclick="toggleDoorRoi()" style="background: rgba(59, 130, 246, 0.2); border: 1px solid rgba(59, 130, 246, 0.4); color: #60a5fa; padding: 0.4rem 0.8rem; border-radius: 8px; font-size: 0.85rem; cursor: pointer;">⚡ Door Filter: Disabled</button>
+                    <button class="btn-action" onclick="clearDoorRoi()" style="background: rgba(239, 68, 68, 0.2); border: 1px solid rgba(239, 68, 68, 0.4); color: #f87171; padding: 0.4rem 0.8rem; border-radius: 8px; font-size: 0.85rem; cursor: pointer;">🔄 Clear Points</button>
+                    <button class="btn-action" onclick="saveDoorRoi()" style="background: rgba(16, 185, 129, 0.2); border: 1px solid rgba(16, 185, 129, 0.4); color: #34d399; padding: 0.4rem 0.8rem; border-radius: 8px; font-size: 0.85rem; cursor: pointer; font-weight: 600;">💾 Save Door Zone</button>
+                </div>
+            </div>
+
+            <div id="stream-wrapper" style="position: relative; width: 100%; max-width: 1000px; margin: 0 auto; aspect-ratio: 16/9; background: #0d1117; border-radius: 12px; overflow: hidden; border: 1px solid var(--border-color); display: flex; align-items: center; justify-content: center;">
+                <img id="stream-img" src="/video_feed" style="width: 100%; height: 100%; object-fit: contain; display: block;" onerror="handleStreamError(this)" onload="handleStreamLoad()" />
+                <canvas id="door-canvas" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair; z-index: 10;"></canvas>
+                <div id="stream-placeholder" style="position: absolute; color: var(--text-muted); font-size: 0.9rem; text-align: center; display: none;">
+                    📹 Stream Offline. Start the pipeline by clicking the status badge above.
+                </div>
+            </div>
+        </div>
+
         <!-- Primary/Today's Stats (Main Indicators) -->
         <div class="section-title" style="margin-top: 1rem;">
             📊 Today's Metrics (Real-Time)
@@ -574,6 +607,150 @@ async def dashboard():
         // Initial load & backup periodic 10s refresh
         updateDashboard();
         setInterval(updateDashboard, 10000);
+
+        // Door Zone Canvas Drawing Logic
+        let doorPoints = [];
+        let roiEnabled = false;
+        const canvas = document.getElementById('door-canvas');
+        const ctx = canvas ? canvas.getContext('2d') : null;
+
+        function resizeCanvas() {
+            if (!canvas) return;
+            canvas.width = canvas.clientWidth;
+            canvas.height = canvas.clientHeight;
+            drawCanvas();
+        }
+        window.addEventListener('resize', resizeCanvas);
+
+        if (canvas) {
+            canvas.addEventListener('click', function(e) {
+                const rect = canvas.getBoundingClientRect();
+                const x = (e.clientX - rect.left) / rect.width;
+                const y = (e.clientY - rect.top) / rect.height;
+                doorPoints.push([x, y]);
+                drawCanvas();
+            });
+        }
+
+        function drawCanvas() {
+            if (!ctx || !canvas) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (doorPoints.length === 0) return;
+
+            const w = canvas.width;
+            const h = canvas.height;
+
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = roiEnabled ? '#10b981' : '#f59e0b';
+            ctx.fillStyle = roiEnabled ? 'rgba(16, 185, 129, 0.25)' : 'rgba(245, 158, 11, 0.25)';
+
+            ctx.beginPath();
+            ctx.moveTo(doorPoints[0][0] * w, doorPoints[0][1] * h);
+            for (let i = 1; i < doorPoints.length; i++) {
+                ctx.lineTo(doorPoints[i][0] * w, doorPoints[i][1] * h);
+            }
+            if (doorPoints.length >= 3) {
+                ctx.closePath();
+                ctx.fill();
+            }
+            ctx.stroke();
+
+            // Draw vertex points
+            for (let i = 0; i < doorPoints.length; i++) {
+                const px = doorPoints[i][0] * w;
+                const py = doorPoints[i][1] * h;
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(px, py, 5, 0, 2 * Math.PI);
+                ctx.fill();
+                ctx.strokeStyle = '#000000';
+                ctx.stroke();
+            }
+        }
+
+        async function loadDoorRoi() {
+            try {
+                const res = await fetch('/api/door_roi');
+                const data = await res.json();
+                roiEnabled = data.enabled || false;
+                
+                let resolutionStr = document.getElementById('info-resolution').innerText;
+                let frameW = 2560, frameH = 1440;
+                if (resolutionStr && resolutionStr.includes('x')) {
+                    const parts = resolutionStr.split('x');
+                    frameW = parseInt(parts[0]) || 2560;
+                    frameH = parseInt(parts[1]) || 1440;
+                }
+
+                if (data.points && data.points.length > 0) {
+                    doorPoints = data.points.map(p => [p[0] / frameW, p[1] / frameH]);
+                } else {
+                    doorPoints = [];
+                }
+
+                updateRoiBtn();
+                resizeCanvas();
+            } catch(e) {}
+        }
+
+        function updateRoiBtn() {
+            const btn = document.getElementById('btn-toggle-roi');
+            if (!btn) return;
+            btn.innerText = roiEnabled ? '⚡ Door Filter: ENABLED' : '⚡ Door Filter: DISABLED';
+            btn.style.background = roiEnabled ? 'rgba(16, 185, 129, 0.2)' : 'rgba(59, 130, 246, 0.2)';
+            btn.style.color = roiEnabled ? '#34d399' : '#60a5fa';
+            btn.style.borderColor = roiEnabled ? 'rgba(16, 185, 129, 0.4)' : 'rgba(59, 130, 246, 0.4)';
+        }
+
+        function toggleDoorRoi() {
+            roiEnabled = !roiEnabled;
+            updateRoiBtn();
+            drawCanvas();
+        }
+
+        function clearDoorRoi() {
+            doorPoints = [];
+            drawCanvas();
+        }
+
+        async function saveDoorRoi() {
+            try {
+                let resolutionStr = document.getElementById('info-resolution').innerText;
+                let frameW = 2560, frameH = 1440;
+                if (resolutionStr && resolutionStr.includes('x')) {
+                    const parts = resolutionStr.split('x');
+                    frameW = parseInt(parts[0]) || 2560;
+                    frameH = parseInt(parts[1]) || 1440;
+                }
+
+                const pixelPoints = doorPoints.map(p => [
+                    Math.round(p[0] * frameW),
+                    Math.round(p[1] * frameH)
+                ]);
+
+                await fetch('/api/door_roi', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: roiEnabled, points: pixelPoints })
+                });
+                alert('✅ Door Zone saved successfully!');
+            } catch(e) {
+                alert('Error saving Door Zone.');
+            }
+        }
+
+        function handleStreamError(img) {
+            const placeholder = document.getElementById('stream-placeholder');
+            if (placeholder) placeholder.style.display = 'block';
+        }
+
+        function handleStreamLoad() {
+            const placeholder = document.getElementById('stream-placeholder');
+            if (placeholder) placeholder.style.display = 'none';
+            resizeCanvas();
+        }
+
+        loadDoorRoi();
 
         let isStarting = false;
         async function handleStatusClick() {
@@ -787,6 +964,45 @@ def update_pipeline_status(status: str, camera: str = "", resolution: str = "", 
             "backend": decoder_backend,
         }
         asyncio.run_coroutine_threadsafe(broadcast_ws(event_data), _loop)
+
+
+class DoorROIPayload(BaseModel):
+    enabled: bool
+    points: List[List[float]]
+
+
+@app.get("/api/door_roi")
+async def get_door_roi():
+    from .config import load_door_roi
+    return load_door_roi()
+
+
+@app.post("/api/door_roi")
+async def save_door_roi_endpoint(data: DoorROIPayload):
+    from .config import save_door_roi
+    save_door_roi(data.model_dump())
+    return {"status": "saved", "roi": data.model_dump()}
+
+
+def generate_mjpeg_stream():
+    """MJPEG stream generator serving real-time annotated camera frames."""
+    global _latest_frame_jpeg
+    while True:
+        if _latest_frame_jpeg is not None:
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" + _latest_frame_jpeg + b"\r\n"
+            )
+        time.sleep(0.04)
+
+
+@app.get("/video_feed")
+async def video_feed():
+    """Stream live annotated camera frames with head visitor IDs and door ROI overlay."""
+    return StreamingResponse(
+        generate_mjpeg_stream(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
 
 
 class RTSPConfig(BaseModel):
